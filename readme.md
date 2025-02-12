@@ -1,6 +1,6 @@
 # Sorcherer
 
-[Osciliating Cat Demo](/sorcherer/osciliating_cat.gif)
+![Osciliating Cat Demo](https://raw.githubusercontent.com/yepistream/sorcherer/refs/heads/main/osciliating_cat.gif)
 
 **Sorcherer** is a lightweight JavaScript library for attaching dynamic HTML overlays to Three.js Object3D instances. With Sorcherer, you can define overlays in your HTML using a custom `<realm>` tag and have them automatically update (with culling, distance‑based scaling, rotation via CSS, auto‑centering, and more) based on your 3D scene’s state.
 
