@@ -17,15 +17,16 @@ import { Vector3, Frustum, Matrix4 } from 'three';
 /**
  * Sorcherer - A library for attaching HTML overlays to Three.js Object3D instances.
  *
- * Overlays can be defined via a custom `<realm>` tag and support features such as:
+ * Overlays can be defined via a custom `<realm>` tag and support:
  * - Distance-based scaling (simulate3D)
- * - Rotation via the CSS "rotate" property (simulateRotation)
- * - Auto-centering of the overlay
+ * - Rotation via CSS's `rotate` property (simulateRotation)
+ * - Auto-centering
  * - Custom offsets
  * - DOM culling based on camera frustum
+ * - Dynamic variables using placeholders like $varName$ or $varName=defaultValue$
  */
 export class Sorcherer {
-  // All overlay instances.
+  // All overlay instances (stored in a Set)
   static allLoadedElements = new Set();
   // For frustum culling.
   static frustum = new Frustum();
@@ -35,6 +36,10 @@ export class Sorcherer {
   static autoUpdateRunning = false;
   // Registry mapping Object3D names to objects.
   static objectRegistry = new Map();
+  // Global dictionary mapping idm (i.e. Object3D name) to overlay instance.
+  static instancesById = {};
+  // Alias for instancesById.
+  static get elements() { return Sorcherer.instancesById; }
   // Default scale multiplier (developers can change this via Sorcherer.defaultScaleMultiplier).
   static defaultScaleMultiplier = 1;
 
@@ -49,10 +54,10 @@ export class Sorcherer {
   /**
    * @param {THREE.Object3D} object - The target Object3D.
    * @param {THREE.Vector3} [offset=new Vector3()] - Optional offset for the overlay.
-   * @param {boolean} [simulate3D=false] - Scale the overlay based on distance.
-   * @param {boolean} [simulateRotation=false] - Rotate the overlay with the object.
-   * @param {boolean} [autoCenter=false] - Auto-center the overlay relative to its computed screen position.
-   * @param {number} [scaleMultiplier] - Multiplier applied to distance-based scaling (defaults to Sorcherer.defaultScaleMultiplier).
+   * @param {boolean} [simulate3D=false] - Whether to scale the overlay based on distance.
+   * @param {boolean} [simulateRotation=false] - Whether to rotate the overlay with the object.
+   * @param {boolean} [autoCenter=false] - Whether to auto-center the overlay relative to its computed screen position.
+   * @param {number} [scaleMultiplier] - Multiplier for distance-based scaling (defaults to Sorcherer.defaultScaleMultiplier).
    */
   constructor(object, offset = new Vector3(), simulate3D = false, simulateRotation = false, autoCenter = false, scaleMultiplier) {
     this.object = object;
@@ -63,12 +68,17 @@ export class Sorcherer {
     this.scaleMultiplier = (scaleMultiplier !== undefined) ? scaleMultiplier : Sorcherer.defaultScaleMultiplier;
     this._parentSpan = this.createSpan();
     this.innerHTML = "";
+    
+    // For dynamic variables: store the original template and dynamicVars.
+    this.template = "";
+    this.dynamicVars = {};
 
     if (typeof document !== "undefined") {
       Sorcherer.container.appendChild(this._parentSpan);
       Sorcherer.allLoadedElements.add(this);
     }
 
+    // Auto-remove overlay when the Object3D is disposed.
     if (object && typeof object.dispose === 'function') {
       const originalDispose = object.dispose.bind(object);
       object.dispose = () => {
@@ -92,17 +102,65 @@ export class Sorcherer {
   }
 
   /**
-   * Attaches HTML content to the overlay. Uses innerHTML so markup is parsed.
+   * Attaches HTML content to the overlay.
+   * Dynamic variable placeholders follow the syntax:
+   *    $varName$  or  $varName=defaultValue$
+   *
+   * This method parses the template, stores dynamic variables, and renders the content.
    * @param {string} innerHTML - The HTML content to display.
    */
   attach(innerHTML) {
-    this.innerHTML = innerHTML;
-    this._parentSpan.innerHTML = innerHTML;
+    // Save the template.
+    this.template = innerHTML;
+    this.dynamicVars = {};
+    // Regex to match placeholders: $varName$ or $varName=defaultValue$
+    this.template.replace(/\$([a-zA-Z0-9_]+)(?:=([^$]+))?\$/g, (match, varName, defaultVal) => {
+      this.dynamicVars[varName] = (defaultVal !== undefined) ? defaultVal : '';
+      // Define getter/setter for direct property access.
+      Object.defineProperty(this, varName, {
+        get: () => this.getDynamicVar(varName),
+        set: (value) => { this.setDynamicVar(varName, value); },
+        enumerable: true,
+        configurable: true
+      });
+      return match;
+    });
+    this.renderDynamicVars();
     this._parentSpan.style.display = 'block';
   }
 
   /**
-   * Updates the overlay’s position, scaling, and rotation based on the camera.
+   * Renders the overlay content by replacing placeholders with current dynamic variable values.
+   */
+  renderDynamicVars() {
+    const rendered = this.template.replace(/\$([a-zA-Z0-9_]+)(?:=[^$]+)?\$/g, (match, varName) => {
+      return (this.dynamicVars[varName] !== undefined) ? this.dynamicVars[varName] : '';
+    });
+    this._parentSpan.innerHTML = rendered;
+  }
+
+  /**
+   * Sets the value of a dynamic variable and re-renders the overlay.
+   * @param {string} varName - The variable name.
+   * @param {string} value - The new value.
+   */
+  setDynamicVar(varName, value) {
+    this.dynamicVars[varName] = value;
+    this.renderDynamicVars();
+  }
+
+  /**
+   * Gets the current value of a dynamic variable.
+   * @param {string} varName - The variable name.
+   * @returns {string} The value.
+   */
+  getDynamicVar(varName) {
+    return this.dynamicVars[varName];
+  }
+
+  /**
+   * Updates the overlay’s position, scaling (based on distance), and rotation.
+   * Also re-renders dynamic variables.
    * @param {THREE.Camera} camera - The active camera.
    * @param {THREE.Renderer} renderer - The active renderer.
    */
@@ -113,15 +171,15 @@ export class Sorcherer {
       return;
     }
     
-    // Get world position with offset.
+    // Get the object's world position and add the offset.
     const objectWorldPos = new Vector3();
     this.object.getWorldPosition(objectWorldPos);
     objectWorldPos.add(this.offset);
     
-    // Compute distance from camera.
+    // Compute the Euclidean distance from the camera.
     const distance = camera.position.distanceTo(objectWorldPos);
     
-    // Project position into screen space.
+    // Project the position to screen space.
     const projectedPos = objectWorldPos.clone();
     projectedPos.project(camera);
     
@@ -130,7 +188,7 @@ export class Sorcherer {
     const x = widthHalf * (projectedPos.x + 1);
     const y = heightHalf * (1 - projectedPos.y);
     
-    // Build the transform for translation (with auto-centering if enabled).
+    // Build the transform string for translation.
     let transform = `translate(${x}px, ${y}px)`;
     if (this.autoCenter) {
       transform += ' translate(-50%, -50%)';
@@ -138,15 +196,14 @@ export class Sorcherer {
     
     // Apply distance-based scaling if enabled.
     if (this.simulate3D) {
-      const referenceDistance = 5; // A reference distance at which scale is the default.
+      const referenceDistance = 5;
       const scale = Math.max(0.1, this.scaleMultiplier * (referenceDistance / distance));
       transform += ` scale(${scale})`;
     }
     
-    // Set translation and scaling.
     this._parentSpan.style.transform = transform;
     
-    // Apply rotation separately via the CSS "rotate" property.
+    // Apply rotation via the CSS "rotate" property if enabled.
     if (this.simulateRotation) {
       const angleDeg = this.object.rotation.z * (180 / Math.PI);
       this._parentSpan.style.rotate = `${angleDeg}deg`;
@@ -154,13 +211,17 @@ export class Sorcherer {
       this._parentSpan.style.rotate = '';
     }
     
-    // Adjust zIndex based on distance.
+    // Adjust z-index based on distance.
     this._parentSpan.style.zIndex = Math.round(1000 / distance).toString();
     this._parentSpan.style.display = 'block';
+    
+    // Re-render dynamic variables.
+    this.renderDynamicVars();
   }
 
   /**
    * Updates all overlays based on the active camera and renderer.
+   * Performs frustum culling.
    * @param {THREE.Camera} camera - The active camera.
    * @param {THREE.Renderer} renderer - The active renderer.
    */
@@ -183,7 +244,7 @@ export class Sorcherer {
    * Starts the auto-update loop.
    * @param {THREE.Camera} camera - The active camera.
    * @param {THREE.Renderer} renderer - The active renderer.
-   * @param {number} [interval=16] - Update interval (in ms).
+   * @param {number} [interval=16] - Update interval in milliseconds.
    */
   static autoSetup(camera, renderer, interval = 16) {
     if (Sorcherer.autoUpdateRunning) return;
@@ -204,10 +265,13 @@ export class Sorcherer {
       this._parentSpan.parentElement.removeChild(this._parentSpan);
     }
     Sorcherer.allLoadedElements.delete(this);
+    if (this.object && this.object.name && Sorcherer.instancesById[this.object.name]) {
+      delete Sorcherer.instancesById[this.object.name];
+    }
   }
 
   /**
-   * Registers a Three.js Object3D using its name as key.
+   * Registers a Three.js Object3D using its name as the key.
    * @param {THREE.Object3D} object - The object to register.
    */
   static registerObject3D(object) {
@@ -217,15 +281,14 @@ export class Sorcherer {
   }
 
   /**
-   * Scans the DOM for a custom <realm> tag and attaches overlays based on child elements’ attributes.
-   *
-   * Supported attributes on child elements:
-   * - idm: The Object3D name to match.
+   * Scans the DOM for a custom <realm> tag. For each child element with an "idm" attribute,
+   * this method looks up the registered Object3D and reads additional attributes:
    * - simulate3D: "true" enables distance-based scaling.
    * - simulateRotation: "true" enables rotation via CSS "rotate".
    * - offset: A comma-separated list (e.g., "0,0.5,0") defining a THREE.Vector3 offset.
-   * - autoCenter: "true" enables auto-centering.
+   * - autoCenter: "true" centers the overlay relative to its computed position.
    * - scaleMultiplier: A number to multiply the computed scale factor.
+   * The overlay's content may include dynamic variable placeholders.
    */
   static attachFromRealm() {
     const realmElement = document.querySelector('realm');
@@ -260,10 +323,39 @@ export class Sorcherer {
         const instance = new Sorcherer(object, offset, simulate3D, simulateRotation, autoCenter, scaleMultiplier);
         instance.attach(el.innerHTML);
         el.remove();
+        if (object.name) {
+          Sorcherer.instancesById[object.name] = instance;
+        }
       }
     });
     if (realmElement.children.length === 0) {
       realmElement.remove();
     }
+  }
+
+  /**
+   * Clones the current overlay instance and attaches the clone to the specified Object3D.
+   * @param {THREE.Object3D} targetObject - The target Object3D to attach the clone.
+   * @param {string} newName - The new name for the cloned overlay (and the target Object3D).
+   * @returns {Sorcherer} The cloned overlay instance.
+   */
+  attachClone(targetObject, newName) {
+    const clone = new Sorcherer(
+      targetObject,
+      this.offset,
+      this.simulate3D,
+      this.simulateRotation,
+      this.autoCenter,
+      this.scaleMultiplier
+    );
+    clone.template = this.template;
+    // Shallow-clone dynamicVars.
+    clone.dynamicVars = { ...this.dynamicVars };
+    clone.renderDynamicVars();
+    if (newName) {
+      targetObject.name = newName;
+      Sorcherer.instancesById[newName] = clone;
+    }
+    return clone;
   }
 }
