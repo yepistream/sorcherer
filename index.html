@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Sorcherer Demo</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #02030a;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    canvas {
+      display: block;
+    }
+    /* Sorcherer overlay container */
+    .sorcherer-container {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 9999;
+      font-family: inherit;
+    }
+    .magic-MinusOne {
+      position: absolute;
+      color: #fff;
+      pointer-events: auto;
+      padding: 4px 8px;
+      border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.25);
+      background: radial-gradient(circle at top, rgba(0,255,153,0.35), rgba(0,0,0,0.75));
+      backdrop-filter: blur(6px);
+      box-shadow: 0 0 12px rgba(0,0,0,0.7);
+      white-space: nowrap;
+    }
+    .hud-title {
+      font-weight: 600;
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .hud-meta {
+      font-size: 11px;
+      opacity: 0.85;
+    }
+  </style>
+   <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.164.0/build/three.module.js",
+      "three/examples/jsm/": "https://unpkg.com/three@0.164.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+
+  <!--
+    Realm: HTML overlay definitions.
+    "idm" must match object3D.name in the scene.
+  -->
+  <realm>
+    <div idm="cube"
+         simulate3D="true"
+         simulateRotation="true"
+         autoCenter="true"
+         offset="0,0.9,0">
+      <div class="hud-title">$label=Magic Cube$</div>
+      <div class="hud-meta">Distance: $distance=0.00$</div>
+      <div class="hud-meta">Dog count: $dogCount=0$</div>
+    </div>
+
+    <div idm="sphere"
+         simulate3D="true"
+         autoCenter="true"
+         offset="0,1.1,0">
+      <div class="hud-title">$label=Watcher Sphere$</div>
+      <div class="hud-meta">Y position: $yPos=0.00$</div>
+    </div>
+  </realm>
+
+  <script type="module">
+    // Assumes:
+    //   - sorcherer.js is in the same folder as this HTML
+    //   - Your bundler/dev server can resolve "three" (or adjust imports accordingly)
+
+    import * as THREE from 'three';
+    import { Sorcherer } from './src/sorcherer.js';
+
+    // --- basic three.js setup -------------------------------------------------
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x050510);
+
+    const camera = new THREE.PerspectiveCamera(
+      60,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      100
+    );
+    camera.position.set(0, 1.5, 6);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // Lights
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.4);
+    dirLight.position.set(5, 8, 5);
+    scene.add(dirLight);
+
+    const ambient = new THREE.AmbientLight(0x404060, 0.6);
+    scene.add(ambient);
+
+    // Helpers
+    const grid = new THREE.GridHelper(20, 20, 0x333333, 0x111111);
+    grid.position.y = -1;
+    scene.add(grid);
+
+    const axes = new THREE.AxesHelper(2);
+    scene.add(axes);
+
+    // --- objects --------------------------------------------------------------
+
+    // Cube
+    const cubeGeo = new THREE.BoxGeometry(1, 1, 1);
+    const cubeMat = new THREE.MeshStandardMaterial({
+      color: 0x00ff99,
+      roughness: 0.25,
+      metalness: 0.3,
+      emissive: 0x001f10,
+      emissiveIntensity: 0.7
+    });
+    const cube = new THREE.Mesh(cubeGeo, cubeMat);
+    cube.name = 'cube';         // must match idm="cube"
+    cube.position.set(-1.5, 0, 0);
+    scene.add(cube);
+
+    // Sphere
+    const sphereGeo = new THREE.SphereGeometry(0.6, 32, 32);
+    const sphereMat = new THREE.MeshStandardMaterial({
+      color: 0x3399ff,
+      roughness: 0.3,
+      metalness: 0.4,
+      emissive: 0x050a2a,
+      emissiveIntensity: 0.8
+    });
+    const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+    sphere.name = 'sphere';     // must match idm="sphere"
+    sphere.position.set(1.5, 0, 0);
+    scene.add(sphere);
+
+    // --- Sorcherer bootstrap (one call instead of 3) -------------------------
+
+    Sorcherer.bootstrap(scene, camera, renderer, {
+      interval: 16,        // ms between overlay updates (throttled inside rAF)
+      autoAttach: true,    // call attachFromRealm() for <realm> overlays
+      autoRegister: true   // register all named objects in the scene
+    });
+
+    // Overlay instances indexed by object name:
+    const overlays = Sorcherer.elements;
+
+    // --- resize handling ------------------------------------------------------
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // --- animation loop -------------------------------------------------------
+
+    const clock = new THREE.Clock();
+    let dogCount = 0;
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const t = clock.getElapsedTime();
+
+      // Cube motion
+      cube.rotation.x += 0.01;
+      cube.rotation.y += 0.02;
+      cube.position.y = Math.sin(t * 1.8) * 0.6;
+
+      // Sphere motion (orbital)
+      const r = 2.4;
+      sphere.position.x = Math.cos(t * 0.7) * r;
+      sphere.position.z = Math.sin(t * 0.7) * r;
+      sphere.position.y = Math.sin(t * 2.0) * 0.5;
+
+      // Camera orbit
+      const camR = 6;
+      camera.position.x = Math.sin(t * 0.25) * camR;
+      camera.position.z = Math.cos(t * 0.25) * camR;
+      camera.lookAt(0, 0.3, 0);
+
+      // Dynamic overlay updates
+      const cubeOverlay = overlays['cube'];
+      if (cubeOverlay) {
+        dogCount += 0.03;
+        const dist = camera.position.distanceTo(cube.position).toFixed(2);
+        cubeOverlay.label = 'Magic Cube';
+        cubeOverlay.distance = dist;
+        cubeOverlay.dogCount = dogCount.toFixed(0);
+      }
+
+      const sphereOverlay = overlays['sphere'];
+      if (sphereOverlay) {
+        sphereOverlay.label = 'Watcher Sphere';
+        sphereOverlay.yPos = sphere.position.y.toFixed(2);
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    animate();
+  </script>
+</body>
+</html>

@@ -14,25 +14,16 @@
 
 import { Vector3, Frustum, Matrix4 } from 'three';
 
-/**
- * Sorcherer - A library for attaching HTML overlays to Three.js Object3D instances.
- *
- * Overlays can be defined via a custom `<realm>` tag and support:
- * - Distance-based scaling (simulate3D)
- * - Rotation via CSS's `rotate` property (simulateRotation)
- * - Auto-centering
- * - Custom offsets
- * - DOM culling based on camera frustum
- * - Dynamic variables using placeholders like $varName$ or $varName=defaultValue$
- */
-export class Sorcherer {
+class Sorcherer {
   // All overlay instances (stored in a Set)
   static allLoadedElements = new Set();
   // For frustum culling.
   static frustum = new Frustum();
   static matrix = new Matrix4();
-  // Container element for all overlays.
-  static container = document.createElement('div');
+  // Container element for all overlays (null in non-DOM environments).
+  static container = (typeof document !== "undefined")
+    ? document.createElement('div')
+    : null;
   static autoUpdateRunning = false;
   // Registry mapping Object3D names to objects.
   static objectRegistry = new Map();
@@ -45,7 +36,7 @@ export class Sorcherer {
 
   // Static initializer: attach the overlay container.
   static {
-    if (typeof document !== "undefined") {
+    if (typeof document !== "undefined" && Sorcherer.container) {
       Sorcherer.container.classList.add('sorcherer-container');
       document.body.appendChild(Sorcherer.container);
     }
@@ -73,26 +64,30 @@ export class Sorcherer {
     this.template = "";
     this.dynamicVars = {};
 
-    if (typeof document !== "undefined") {
+    if (typeof document !== "undefined" && Sorcherer.container) {
       Sorcherer.container.appendChild(this._parentSpan);
       Sorcherer.allLoadedElements.add(this);
     }
 
-    // Auto-remove overlay when the Object3D is disposed.
-    if (object && typeof object.dispose === 'function') {
-      const originalDispose = object.dispose.bind(object);
-      object.dispose = () => {
+    // Auto-remove overlay when the Object3D is removed from its parent.
+    if (this.object) {
+      const originalOnRemoved = this.object.onRemovedFromParent;
+      this.object.onRemovedFromParent = () => {
+        if (originalOnRemoved) originalOnRemoved();
         this.dispose();
-        originalDispose();
       };
     }
   }
 
-  /**
-   * Creates the overlay element.
-   * @returns {HTMLSpanElement}
-   */
   createSpan() {
+    if (typeof document === "undefined") {
+      // Minimal stub for non-DOM environments.
+      return {
+        style: {},
+        classList: { add() {} },
+        innerHTML: ''
+      };
+    }
     const span = document.createElement('span');
     span.classList.add('magic-MinusOne');
     span.style.position = 'absolute';
@@ -113,9 +108,13 @@ export class Sorcherer {
     // Save the template.
     this.template = innerHTML;
     this.dynamicVars = {};
-    // Regex to match placeholders: $varName$ or $varName=defaultValue$
-    this.template.replace(/\$([a-zA-Z0-9_]+)(?:=([^$]+))?\$/g, (match, varName, defaultVal) => {
-      this.dynamicVars[varName] = (defaultVal !== undefined) ? defaultVal : '';
+    // Regex to match $varName$ or $varName=defaultValue$.
+    const regex = /\$([a-zA-Z0-9_]+)(?:=([^$]+))?\$/g;
+    // First pass: extract dynamic variables and defaults.
+    this.template.replace(regex, (match, varName, defaultVal) => {
+      if (!(varName in this.dynamicVars)) {
+        this.dynamicVars[varName] = (defaultVal !== undefined) ? defaultVal : '';
+      }
       // Define getter/setter for direct property access.
       Object.defineProperty(this, varName, {
         get: () => this.getDynamicVar(varName),
@@ -160,63 +159,59 @@ export class Sorcherer {
 
   /**
    * Updates the overlay’s position, scaling (based on distance), and rotation.
-   * Also re-renders dynamic variables.
    * @param {THREE.Camera} camera - The active camera.
    * @param {THREE.Renderer} renderer - The active renderer.
    */
-  async bufferInstance(camera, renderer) {
+  bufferInstance(camera, renderer) {
     if (!this.object) return;
     if (!this.object.visible) {
       this._parentSpan.style.display = 'none';
       return;
     }
-    
+
     // Get the object's world position and add the offset.
     const objectWorldPos = new Vector3();
     this.object.getWorldPosition(objectWorldPos);
     objectWorldPos.add(this.offset);
-    
+
     // Compute the Euclidean distance from the camera.
-    const distance = camera.position.distanceTo(objectWorldPos);
-    
+    let distance = camera.position.distanceTo(objectWorldPos);
+    // Avoid division by zero / Infinity scales.
+    if (!isFinite(distance) || distance <= 0) distance = 0.0001;
+
     // Project the position to screen space.
     const projectedPos = objectWorldPos.clone();
     projectedPos.project(camera);
-    
+
     const widthHalf = renderer.domElement.clientWidth / 2;
     const heightHalf = renderer.domElement.clientHeight / 2;
     const x = widthHalf * (projectedPos.x + 1);
     const y = heightHalf * (1 - projectedPos.y);
-    
-    // Build the transform string for translation.
+
+    // Build the transform string.
     let transform = `translate(${x}px, ${y}px)`;
     if (this.autoCenter) {
       transform += ' translate(-50%, -50%)';
     }
-    
+
     // Apply distance-based scaling if enabled.
     if (this.simulate3D) {
       const referenceDistance = 5;
       const scale = Math.max(0.1, this.scaleMultiplier * (referenceDistance / distance));
       transform += ` scale(${scale})`;
     }
-    
-    this._parentSpan.style.transform = transform;
-    
-    // Apply rotation via the CSS "rotate" property if enabled.
+
+    // Apply rotation as part of the transform if enabled.
     if (this.simulateRotation) {
       const angleDeg = this.object.rotation.z * (180 / Math.PI);
-      this._parentSpan.style.rotate = `${angleDeg}deg`;
-    } else {
-      this._parentSpan.style.rotate = '';
+      transform += ` rotate(${angleDeg}deg)`;
     }
-    
+
+    this._parentSpan.style.transform = transform;
+
     // Adjust z-index based on distance.
     this._parentSpan.style.zIndex = Math.round(1000 / distance).toString();
     this._parentSpan.style.display = 'block';
-    
-    // Re-render dynamic variables.
-    this.renderDynamicVars();
   }
 
   /**
@@ -225,16 +220,24 @@ export class Sorcherer {
    * @param {THREE.Camera} camera - The active camera.
    * @param {THREE.Renderer} renderer - The active renderer.
    */
-  static async bufferAll(camera, renderer) {
+  static bufferAll(camera, renderer) {
+    if (!camera || !renderer) return;
+
     Sorcherer.matrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     Sorcherer.frustum.setFromProjectionMatrix(Sorcherer.matrix);
-    
+
     for (let element of Sorcherer.allLoadedElements) {
+      if (!element.object) {
+        if (element._parentSpan && element._parentSpan.style) {
+          element._parentSpan.style.display = 'none';
+        }
+        continue;
+      }
       const worldPos = new Vector3();
       element.object.getWorldPosition(worldPos);
       if (Sorcherer.frustum.containsPoint(worldPos)) {
-        await element.bufferInstance(camera, renderer);
-      } else {
+        element.bufferInstance(camera, renderer);
+      } else if (element._parentSpan && element._parentSpan.style) {
         element._parentSpan.style.display = 'none';
       }
     }
@@ -244,17 +247,37 @@ export class Sorcherer {
    * Starts the auto-update loop.
    * @param {THREE.Camera} camera - The active camera.
    * @param {THREE.Renderer} renderer - The active renderer.
-   * @param {number} [interval=16] - Update interval in milliseconds.
+   * @param {number} [interval=16] - Minimum milliseconds between updates.
    */
   static autoSetup(camera, renderer, interval = 16) {
-    if (Sorcherer.autoUpdateRunning) return;
+    if (Sorcherer.autoUpdateRunning || !camera || !renderer) return;
     Sorcherer.autoUpdateRunning = true;
-    const loop = async () => {
-      if (!Sorcherer.autoUpdateRunning) return;
-      await Sorcherer.bufferAll(camera, renderer);
-      setTimeout(loop, interval);
-    };
-    loop();
+
+    const useRaf = (typeof requestAnimationFrame === 'function');
+
+    if (useRaf) {
+      let lastTime = 0;
+      const loop = (time) => {
+        if (!Sorcherer.autoUpdateRunning) return;
+        if (!lastTime || time - lastTime >= interval) {
+          lastTime = time;
+          Sorcherer.bufferAll(camera, renderer);
+        }
+        requestAnimationFrame(loop);
+      };
+      requestAnimationFrame(loop);
+    } else {
+      const loop = () => {
+        if (!Sorcherer.autoUpdateRunning) return;
+        Sorcherer.bufferAll(camera, renderer);
+        setTimeout(loop, interval);
+      };
+      loop();
+    }
+  }
+
+  static stopAutoSetup() {
+    Sorcherer.autoUpdateRunning = false;
   }
 
   /**
@@ -281,28 +304,88 @@ export class Sorcherer {
   }
 
   /**
-   * Scans the DOM for a custom <realm> tag. For each child element with an "idm" attribute,
+   * Convenience: register all named objects in a scene (or any Object3D subtree).
+   * @param {THREE.Object3D} scene - Root to traverse.
+   */
+  static registerScene(scene) {
+    if (!scene || typeof scene.traverse !== 'function') return;
+    scene.traverse(obj => {
+      if (obj && obj.name) {
+        Sorcherer.registerObject3D(obj);
+      }
+    });
+  }
+
+  /**
+   * High-level convenience: register all named objects in a scene,
+   * attach overlays from <realm>, and start the auto-update loop.
+   *
+   * This replaces manual calls to:
+   *   Sorcherer.registerObject3D(...)
+   *   Sorcherer.attachFromRealm()
+   *   Sorcherer.autoSetup(camera, renderer)
+   *
+   * @param {THREE.Scene} scene
+   * @param {THREE.Camera} camera
+   * @param {THREE.Renderer} renderer
+   * @param {Object} [options]
+   * @param {number} [options.interval=16]  Min ms between updates.
+   * @param {boolean} [options.autoAttach=true]  Call attachFromRealm().
+   * @param {boolean} [options.autoRegister=true]  Call registerScene().
+   */
+  static bootstrap(scene, camera, renderer, options = {}) {
+    const {
+      interval = 16,
+      autoAttach = true,
+      autoRegister = true,
+    } = options;
+
+    if (!camera || !renderer) {
+      console.warn('[Sorcherer] bootstrap() requires a camera and renderer.');
+      return;
+    }
+
+    if (autoRegister) {
+      Sorcherer.registerScene(scene);
+    }
+
+    if (autoAttach && typeof document !== 'undefined') {
+      Sorcherer.attachFromRealm();
+    }
+
+    Sorcherer.autoSetup(camera, renderer, interval);
+  }
+
+  /**
+   * Scans the DOM for custom <realm> tags. For each child element with an "idm" attribute,
    * this method looks up the registered Object3D and reads additional attributes:
    * - simulate3D: "true" enables distance-based scaling.
-   * - simulateRotation: "true" enables rotation via CSS "rotate".
+   * - simulateRotation: "true" enables rotation via CSS transform.
    * - offset: A comma-separated list (e.g., "0,0.5,0") defining a THREE.Vector3 offset.
    * - autoCenter: "true" centers the overlay relative to its computed position.
    * - scaleMultiplier: A number to multiply the computed scale factor.
    * The overlay's content may include dynamic variable placeholders.
+   *
+   * @param {Document|Element} [root=document] - Optional root node to search within.
    */
-  static attachFromRealm() {
-    const realmElement = document.querySelector('realm');
-    if (!realmElement) return;
-    const elements = realmElement.querySelectorAll('[idm]');
-    elements.forEach(el => {
-      const idm = el.getAttribute('idm');
-      if (!idm) return;
-      const object = Sorcherer.objectRegistry.get(idm);
-      if (object) {
+  static attachFromRealm(root = document) {
+    if (typeof document === "undefined") return;
+    const rootNode = root || document;
+    const realmElements = rootNode.querySelectorAll('realm');
+    if (!realmElements.length) return;
+
+    realmElements.forEach((realmElement) => {
+      const elements = realmElement.querySelectorAll('[idm]');
+      elements.forEach(el => {
+        const idm = el.getAttribute('idm');
+        if (!idm) return;
+        const object = Sorcherer.objectRegistry.get(idm);
+        if (!object) return;
+
         const simulate3D = (el.getAttribute('simulate3D') || '').toLowerCase() === 'true';
         const simulateRotation = (el.getAttribute('simulateRotation') || '').toLowerCase() === 'true';
         const autoCenter = (el.getAttribute('autoCenter') || '').toLowerCase() === 'true';
-        
+
         let offset = new Vector3();
         if (el.hasAttribute('offset')) {
           const offsetStr = el.getAttribute('offset');
@@ -311,7 +394,7 @@ export class Sorcherer {
             offset = new Vector3(parts[0], parts[1], parts[2]);
           }
         }
-        
+
         let scaleMultiplier;
         if (el.hasAttribute('scaleMultiplier')) {
           const parsed = parseFloat(el.getAttribute('scaleMultiplier'));
@@ -319,18 +402,19 @@ export class Sorcherer {
             scaleMultiplier = parsed;
           }
         }
-        
+
         const instance = new Sorcherer(object, offset, simulate3D, simulateRotation, autoCenter, scaleMultiplier);
         instance.attach(el.innerHTML);
         el.remove();
         if (object.name) {
           Sorcherer.instancesById[object.name] = instance;
         }
+      });
+
+      if (realmElement.children.length === 0) {
+        realmElement.remove();
       }
     });
-    if (realmElement.children.length === 0) {
-      realmElement.remove();
-    }
   }
 
   /**
@@ -359,3 +443,5 @@ export class Sorcherer {
     return clone;
   }
 }
+
+export { Sorcherer };

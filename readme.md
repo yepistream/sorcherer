@@ -38,6 +38,7 @@ npm install sorcherer
 
 Or clone the repository directly from GitHub.
 
+````md
 ## Usage
 
 ### Importing the Library
@@ -46,155 +47,381 @@ Use Sorcherer as an ES module:
 
 ```js
 import { Sorcherer } from 'sorcherer';
-```
+````
+
+Sorcherer expects `three` to be available as an ES module as well.
 
 ### Defining Overlays via the `<realm>` Tag
 
-Define overlays in your HTML with a custom `<realm>` tag. Each child element must have an `idm` attribute (matching a registered Object3D's name) and can include additional attributes:
+Define overlays in your HTML with a custom `<realm>` tag. Each child element with an `idm` attribute is bound to a Three.js `Object3D` whose `.name` matches that `idm`.
 
-- `simulate3D="true"` – Enable distance‑based scaling.
-- `simulateRotation="true"` – Enable rotation via the CSS `rotate` property.
-- `offset="x,y,z"` – Set a custom offset (comma‑separated values).
-- `autoCenter="true"` – Center the overlay relative to its computed screen position.
-- `scaleMultiplier="1.5"` – Multiply the computed scale factor (default is given by `Sorcherer.defaultScaleMultiplier`).
+Supported attributes on each child:
 
-Overlay content may include dynamic variable placeholders in the form `$varName$` or `$varName=defaultValue$`.
+* `idm="cube"` – Name of the target `Object3D` (must match `object.name`).
+* `simulate3D="true"` – Enable distance-based scaling of the overlay.
+* `simulateRotation="true"` – Rotate the overlay with the object (around Z) via CSS transform.
+* `offset="x,y,z"` – Optional world-space offset as a comma-separated vector, e.g. `"0,0.5,0"`.
+* `autoCenter="true"` – Auto-center the overlay around the computed screen position.
+* `scaleMultiplier="1.5"` – Multiplies the distance-based scale factor.
+
+Inside the element you can use dynamic variable placeholders:
+
+* `$varName$`
+* `$varName=defaultValue$`
+
+At runtime these become properties on the corresponding `Sorcherer` instance. For example, `$dogCount=0$` creates `instance.dogCount` which you can update from your render loop.
+
+Example `<realm>` block:
+
+```html
+<realm>
+  <div idm="cube"
+       simulate3D="true"
+       simulateRotation="true"
+       autoCenter="true"
+       offset="0,0.8,0">
+    <div class="hud-title">$label=Magic Cube$</div>
+    <div class="hud-meta">Distance: $distance=0.00$</div>
+    <div class="hud-meta">Dog count: $dogCount=0$</div>
+  </div>
+</realm>
+```
 
 ### Example
 
-Below is a complete HTML example that creates a Three.js scene with a rotating cube, registers the cube with Sorcherer, and defines an overlay via `<realm>` that displays **osciliating_cat.gif**. It also demonstrates dynamic variables and global instance access.
+Below is a minimal example using `Sorcherer.bootstrap`, which replaces the older pattern of manually calling:
+
+```js
+Sorcherer.registerObject3D(cube);
+Sorcherer.attachFromRealm();
+Sorcherer.autoSetup(camera, renderer);
+```
+
+HTML:
 
 ```html
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
-    <meta charset="UTF-8" />
-    <title>Sorcherer Demo – Osciliating Cat</title>
+    <meta charset="utf-8" />
+    <title>Sorcherer Example</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
     <style>
       body {
         margin: 0;
         overflow: hidden;
-        background: #222;
+        background: #02030a;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      canvas {
+        display: block;
+      }
+      .sorcherer-container {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 9999;
+      }
+      .magic-MinusOne {
+        position: absolute;
+        padding: 4px 8px;
+        border-radius: 6px;
+        border: 1px solid rgba(255,255,255,0.25);
+        background: rgba(0,0,0,0.75);
+        color: #fff;
+        font-size: 11px;
+        white-space: nowrap;
+        pointer-events: auto;
       }
     </style>
   </head>
   <body>
-    <!-- Define overlays using the custom <realm> tag -->
+    <!-- Overlays -->
     <realm>
-      <!--
-           Attributes:
-           idm="cube"               => Matches a registered Object3D with name "cube"
-           simulate3D="true"        => Enable distance-based scaling
-           simulateRotation="true"  => Enable rotation via the CSS "rotate" property
-           offset="0,0.5,0"         => Custom vertical offset
-           autoCenter="true"        => Center the overlay relative to its computed position
-           scaleMultiplier="1.5"    => Multiply the computed scale factor by 1.5
-      -->
-      <div idm="cube" simulate3D="true" simulateRotation="true" offset="0,0.5,0" autoCenter="true" scaleMultiplier="1.5">
-        <img src="osciliating_cat.gif" alt="Osciliating Cat" style="max-width:100px; max-height:100px;"><br>
-        Dog count: $dogCount=20$
+      <div idm="cube"
+           simulate3D="true"
+           simulateRotation="true"
+           autoCenter="true"
+           offset="0,0.8,0">
+        <div class="hud-title">$label=Magic Cube$</div>
+        <div class="hud-meta">Distance: $distance=0.00$</div>
+        <div class="hud-meta">Dog count: $dogCount=0$</div>
       </div>
     </realm>
 
     <script type="module">
       import * as THREE from 'three';
-      import { Sorcherer } from 'sorcherer';
+      import { Sorcherer } from './sorcherer.js';
 
-      // Set up the Three.js scene, camera, and renderer.
       const scene = new THREE.Scene();
-      const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-      camera.position.z = 5;
+      scene.background = new THREE.Color(0x050510);
+
+      const camera = new THREE.PerspectiveCamera(
+        60,
+        window.innerWidth / window.innerHeight,
+        0.1,
+        100
+      );
+      camera.position.set(0, 1.5, 6);
 
       const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(window.devicePixelRatio);
       renderer.setSize(window.innerWidth, window.innerHeight);
       document.body.appendChild(renderer.domElement);
 
-      // Create a cube, name it "cube", and add it to the scene.
-      const geometry = new THREE.BoxGeometry();
-      const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
-      const cube = new THREE.Mesh(geometry, material);
-      cube.name = "cube";
+      const light = new THREE.DirectionalLight(0xffffff, 1.4);
+      light.position.set(5, 8, 5);
+      scene.add(light);
+      scene.add(new THREE.AmbientLight(0x404060, 0.6));
+
+      const cubeGeo = new THREE.BoxGeometry(1, 1, 1);
+      const cubeMat = new THREE.MeshStandardMaterial({ color: 0x00ff99 });
+      const cube = new THREE.Mesh(cubeGeo, cubeMat);
+      cube.name = 'cube'; // must match idm="cube"
       scene.add(cube);
 
-      // Register the cube with Sorcherer.
-      Sorcherer.registerObject3D(cube);
-      Sorcherer.attachFromRealm();
-      Sorcherer.autoSetup(camera, renderer);
+      // One call to set everything up:
+      Sorcherer.bootstrap(scene, camera, renderer, {
+        interval: 16,      // minimum ms between overlay updates
+        autoAttach: true,  // scan <realm> and attach overlays
+        autoRegister: true // register all named objects in the scene
+      });
 
-      // Demonstrate updating a dynamic variable after 3 seconds.
-      setTimeout(() => {
-        Sorcherer.instancesById["cube"].dogCount = "42";
-      }, 3000);
+      // Access overlay instances by Object3D name:
+      const overlays = Sorcherer.elements;
+      let dogCount = 0;
 
-      // Animate the cube: circular motion in the xz-plane and oscillation along the y-axis.
       function animate() {
         requestAnimationFrame(animate);
+
         const t = Date.now() * 0.001;
+
         cube.position.x = Math.cos(t) * 2;
         cube.position.z = Math.sin(t) * 2;
         cube.position.y = Math.sin(t * 2) * 1;
-        cube.rotation.x += 0.005;
-        cube.rotation.y += 0.005;
-        cube.rotation.z += 0.01;
+        cube.rotation.x += 0.01;
+        cube.rotation.y += 0.02;
+
+        const cubeOverlay = overlays['cube'];
+        if (cubeOverlay) {
+          dogCount += 0.03;
+          const dist = camera.position.distanceTo(cube.position).toFixed(2);
+          cubeOverlay.label = 'Magic Cube';
+          cubeOverlay.distance = dist;
+          cubeOverlay.dogCount = dogCount.toFixed(0);
+        }
+
         renderer.render(scene, camera);
       }
-      animate();
 
-      window.addEventListener("resize", () => {
+      window.addEventListener('resize', () => {
         camera.aspect = window.innerWidth / window.innerHeight;
         camera.updateProjectionMatrix();
         renderer.setSize(window.innerWidth, window.innerHeight);
       });
+
+      animate();
     </script>
   </body>
 </html>
 ```
 
+You can still use the lower-level API (manual `registerObject3D`, `attachFromRealm`, `autoSetup`) if you want more control, but `bootstrap` covers the common case.
+
+---
+
 ## API Reference
 
-### Static Methods
+### Static Methods and Properties
 
-- **`Sorcherer.registerObject3D(object)`**  
-  Registers a Three.js Object3D with the library using its `name` property as the key.
+* **`Sorcherer.bootstrap(scene, camera, renderer, options?)`**
+  High-level convenience that wires everything up in one call. It:
 
-- **`Sorcherer.attachFromRealm()`**  
-  Scans the DOM for a `<realm>` tag and attaches overlays based on child elements’ custom attributes.
+  1. Registers all named objects in `scene` (via `registerScene`) if `autoRegister` is `true`.
+  2. Scans the DOM for `<realm>` tags and attaches overlays if `autoAttach` is `true`.
+  3. Starts the auto-update loop (via `autoSetup`).
 
-- **`Sorcherer.autoSetup(camera, renderer, interval?)`**  
-  Starts the auto-update loop that refreshes overlays based on camera changes. The optional `interval` (in ms) defaults to 16.
-
-- **`Sorcherer.defaultScaleMultiplier`**  
-  A static property that defines the default multiplier for distance‑based scaling. You can adjust it as needed:
-  ```js
-  Sorcherer.defaultScaleMultiplier = 1.2;
+  ```ts
+  Sorcherer.bootstrap(
+    scene: THREE.Scene,
+    camera: THREE.Camera,
+    renderer: THREE.Renderer,
+    options?: {
+      interval?: number;     // minimum ms between overlay updates (default: 16)
+      autoAttach?: boolean;  // default: true
+      autoRegister?: boolean // default: true
+    }
+  )
   ```
 
-- **`Sorcherer.instancesById`**  
-  A global object mapping Object3D names (idm) to their overlay instances. You can access overlays directly, e.g.:
+* **`Sorcherer.registerScene(scene)`**
+  Traverses a Three.js scene (or any `Object3D` subtree) and registers every object that has a non-empty `.name`:
+
   ```js
-  Sorcherer.instancesById["cube"].dogCount = "42";
+  Sorcherer.registerScene(scene);
   ```
 
-### Instance Methods
+  This is what `bootstrap` uses internally when `autoRegister: true`.
 
-- **`attach(innerHTML)`**  
-  Attaches the provided HTML content to the overlay element (using `innerHTML` so that markup is parsed). This method also parses dynamic variable placeholders (e.g. `$dogCount=20$`) and creates getters/setters for direct access.
+* **`Sorcherer.registerObject3D(object)`**
+  Registers a single `Object3D` using its `name` property as the key:
 
-- **`bufferInstance(camera, renderer)`**  
-  Updates the overlay’s position, scaling (distance‑based), rotation (via CSS `rotate`), and auto-centering based on the current camera and Object3D state. It also re-renders dynamic variables.
-
-- **`dispose()`**  
-  Removes the overlay element and cleans up references.
-
-- **`attachClone(targetObject, newName)`**  
-  Clones the current overlay instance and attaches the clone to the specified `targetObject`. The new overlay is assigned the provided `newName` and stored in `Sorcherer.instancesById` under that name.
-
-- **Dynamic Variable Access:**  
-  After calling `attach()`, any dynamic variable placeholder in the template becomes accessible directly as a property of the overlay instance. For example, if the template contains `$dogCount=20$`:
   ```js
-  Sorcherer.instancesById["cube"].dogCount = "42";
-  console.log(Sorcherer.instancesById["cube"].dogCount); // "42"
+  cube.name = 'cube';
+  Sorcherer.registerObject3D(cube);
   ```
+
+* **`Sorcherer.attachFromRealm(root?)`**
+  Scans the DOM for `<realm>` tags (optionally under a specific root element) and, for each child element with an `idm` attribute, creates and attaches a `Sorcherer` overlay instance bound to the registered `Object3D` with the same name.
+
+  ```ts
+  Sorcherer.attachFromRealm(root?: Document | Element);
+  ```
+
+  You rarely need to call this manually if you use `bootstrap`.
+
+* **`Sorcherer.autoSetup(camera, renderer, interval?)`**
+  Starts the auto-update loop that calls `bufferAll(camera, renderer)` on a throttled `requestAnimationFrame` loop.
+
+  ```ts
+  Sorcherer.autoSetup(
+    camera: THREE.Camera,
+    renderer: THREE.Renderer,
+    interval?: number // minimum ms between updates, default 16
+  );
+  ```
+
+  Normally invoked for you by `bootstrap`.
+
+* **`Sorcherer.stopAutoSetup()`**
+  Stops the auto-update loop started by `autoSetup` or `bootstrap`.
+
+  ```js
+  Sorcherer.stopAutoSetup();
+  ```
+
+* **`Sorcherer.bufferAll(camera, renderer)`**
+  Updates all active overlays:
+
+  * Computes the camera frustum.
+  * Performs frustum culling per target object.
+  * Calls `bufferInstance(camera, renderer)` on visible overlays.
+  * Hides overlays whose objects are outside the camera frustum.
+
+  You usually don’t call this directly; it’s driven by `autoSetup`.
+
+* **`Sorcherer.defaultScaleMultiplier`**
+  Global default for distance-based scaling (used when an instance does not specify its own `scaleMultiplier`).
+
+  ```js
+  Sorcherer.defaultScaleMultiplier = 1.5;
+  ```
+
+* **`Sorcherer.instancesById`**
+  A plain object mapping `Object3D.name` → overlay instance:
+
+  ```js
+  const cubeOverlay = Sorcherer.instancesById['cube'];
+  cubeOverlay.dogCount = '42';
+  ```
+
+* **`Sorcherer.elements`**
+  Alias for `Sorcherer.instancesById` (handy shorter name):
+
+  ```js
+  const overlays = Sorcherer.elements;
+  overlays.cube.label = 'Magic Cube';
+  ```
+
+### Instance Methods and Behavior
+
+A `Sorcherer` instance is created either:
+
+* Internally by `attachFromRealm` when it processes a `<realm>` child, or
+* Manually via `new Sorcherer(object, ...)`.
+
+Constructor:
+
+```ts
+new Sorcherer(
+  object: THREE.Object3D,
+  offset?: THREE.Vector3,      // default: (0,0,0)
+  simulate3D?: boolean,        // default: false
+  simulateRotation?: boolean,  // default: false
+  autoCenter?: boolean,        // default: false
+  scaleMultiplier?: number     // default: Sorcherer.defaultScaleMultiplier
+);
+```
+
+* **`attach(innerHTML)`**
+  Binds an HTML template to the overlay. Parses dynamic variable placeholders of the form `$var$` and `$var=default$`, stores them, and immediately renders the overlay.
+
+  ```js
+  const overlay = new Sorcherer(cube, new THREE.Vector3(0, 0.8, 0), true, true, true);
+  overlay.attach(`
+    <div>Health: $health=100$</div>
+    <div>Ammo: $ammo=30$</div>
+  `);
+  ```
+
+* **`renderDynamicVars()`**
+  Rebuilds the current HTML from `this.template` by substituting the latest `dynamicVars` values into all `$var$` placeholders. Normally you don’t need to call this manually because `setDynamicVar` and direct property setters call it for you.
+
+* **`setDynamicVar(varName, value)` / `getDynamicVar(varName)`**
+  Low-level accessors for dynamic variables:
+
+  ```js
+  overlay.setDynamicVar('health', '75');
+  console.log(overlay.getDynamicVar('health'));
+  ```
+
+* **Dynamic variable property access**
+  For each `$varName$` placeholder in the template, `attach()` defines a property on the instance:
+
+  ```html
+  <div idm="cube">
+    Health: $health=100$
+  </div>
+  ```
+
+  ```js
+  const cubeOverlay = Sorcherer.instancesById['cube'];
+  cubeOverlay.health = '80';        // updates the DOM
+  console.log(cubeOverlay.health);  // "80"
+  ```
+
+* **`bufferInstance(camera, renderer)`**
+  Repositions and transforms the overlay for its target object:
+
+  * Computes world position (plus `offset`).
+  * Projects to screen space and converts to pixel coordinates.
+  * Applies optional `autoCenter`, distance-based scaling (`simulate3D`), and Z-rotation (`simulateRotation`).
+  * Adjusts `z-index` based on distance.
+  * Shows or hides the overlay as needed.
+
+  This is called automatically from `bufferAll`.
+
+* **`dispose()`**
+  Removes the overlay DOM element, unregisters it from `allLoadedElements`, and clears its entry from `instancesById` (if any). Use this when an overlay is no longer needed.
+
+  ```js
+  const overlay = Sorcherer.instancesById['cube'];
+  overlay.dispose();
+  ```
+
+* **`attachClone(targetObject, newName?)`**
+  Clones an existing overlay (including its template and current `dynamicVars`) and attaches the clone to another `Object3D`.
+
+  ```js
+  const srcOverlay = Sorcherer.instancesById['cube'];
+  const clone = srcOverlay.attachClone(otherMesh, 'otherMeshName');
+
+  clone.label = 'Clone HUD';
+  ```
+
+  If `newName` is provided, `targetObject.name` is set to that value and the clone is stored in `Sorcherer.instancesById[newName]`.
+
+
 
 ## Contributing
 
