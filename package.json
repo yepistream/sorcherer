@@ -1,6 +1,6 @@
 {
     "name": "sorcherer",
-    "version": "1.1.0",
+    "version": "2.0.0",
     "description": "A library for attaching dynamic HTML overlays to Three.js Object3D instances with distance-based scaling, rotation, auto-centering, and DOM culling.",
     "main": "index.js",
     "module": "index.js",
