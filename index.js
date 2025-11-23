@@ -1,1 +1,1 @@
-export * from './src/sorcherer.js';
+export * from './dist/sorcherer.js';
