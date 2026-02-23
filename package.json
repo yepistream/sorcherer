@@ -17,6 +17,10 @@
   ],
   "scripts": {
     "build": "node scripts/build.mjs",
+  "main": "index.js",
+  "module": "index.js",
+  "scripts": {
+    "build": "rollup -c",
     "test": "echo \"No tests specified\""
   },
   "repository": {
@@ -40,5 +44,17 @@
   "homepage": "https://github.com/yepistream/sorcherer#readme",
   "dependencies": {
     "three": "^0.152.2"
+  },
+  "files": [
+    "dist",
+    "src",
+    "index.js",
+    "magicalStyle.css"
+  ],
+  "unpkg": "dist/sorcherer.umd.min.js",
+  "jsdelivr": "dist/sorcherer.umd.min.js",
+  "devDependencies": {
+    "@rollup/plugin-terser": "^0.4.4",
+    "rollup": "^4.35.0"
   }
 }
