@@ -1,14 +1,31 @@
 // src/sorcherer.js
 
-// Dynamically load magicalStyle.css if not already loaded.
-(function loadMagicalStyle() {
+// Dynamically inject Sorcherer styles if not already present.
+(function injectMagicalStyle() {
   if (typeof document !== "undefined" && !document.getElementById('magical-style')) {
-    const link = document.createElement('link');
-    link.id = 'magical-style';
-    link.rel = 'stylesheet';
-    // Adjust the path if your structure changes.
-    link.href = '/magicalStyle.css';
-    document.head.appendChild(link);
+    const style = document.createElement('style');
+    style.id = 'magical-style';
+    style.textContent = `
+.sorcherer-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.magic-MinusOne {
+  position: absolute;
+  color: white;
+  font-family: Arial, sans-serif;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 4px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+`;
+    document.head.appendChild(style);
   }
 })();
 
