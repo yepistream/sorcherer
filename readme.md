@@ -8,6 +8,7 @@
   - [Installation](#installation)
   - [Usage](#usage)
     - [Importing the Library](#importing-the-library)
+    - [Browser UMD Bundle](#browser-umd-bundle)
     - [Defining Overlays via the `<realm>` Tag](#defining-overlays-via-the-realm-tag)
     - [Example](#example)
   - [API Reference](#api-reference)
@@ -49,6 +50,32 @@ import { Sorcherer } from 'sorcherer';
 ```
 
 Sorcherer expects `three` to be available as an ES module as well.
+
+### Browser UMD Bundle
+
+For script-tag usage, build the UMD bundle:
+
+```bash
+npm run build
+```
+
+This generates:
+
+- `dist/sorcherer.umd.js`
+- `dist/sorcherer.umd.min.js`
+
+The UMD build keeps `three` external, so load Three.js first and ensure it provides the global `THREE`:
+
+```html
+<script src="https://unpkg.com/three@0.152.2/build/three.min.js"></script>
+<script src="./dist/sorcherer.umd.js"></script>
+<script>
+  // UMD export is available on window.Sorcherer
+  const overlay = new window.Sorcherer.Sorcherer(myObject3D);
+  // equivalent:
+  const OverlayCtor = Sorcherer.Sorcherer;
+</script>
+```
 
 ### Defining Overlays via the `<realm>` Tag
 
