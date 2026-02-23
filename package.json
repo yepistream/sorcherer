@@ -1,33 +1,44 @@
 {
-    "name": "sorcherer",
-    "version": "2.0.1",
-    "description": "A library for attaching dynamic HTML overlays to Three.js Object3D instances with distance-based scaling, rotation, auto-centering, and DOM culling.",
-    "main": "index.js",
-    "module": "index.js",
-    "scripts": {
-        "build": "echo \"No build needed\"",
-        "test": "echo \"No tests specified\""
-    },
-    "repository": {
-        "type": "git",
-        "url": "git+https://github.com/yepistream/sorcherer.git"
-    },
-    "keywords": [
-        "threejs",
-        "overlay",
-        "html",
-        "3d",
-        "culling",
-        "sorcherer",
-        "dom"
-    ],
-    "author": "Marko Kazimirovic (yepistream/BamBam/maBBam)",
-    "license": "MIT",
-    "bugs": {
-        "url": "https://github.com/yepistream/sorcherer/issues"
-    },
-    "homepage": "https://github.com/yepistream/sorcherer#readme",
-    "dependencies": {
-        "three": "^0.152.2"
+  "name": "sorcherer",
+  "version": "2.0.1",
+  "description": "A library for attaching dynamic HTML overlays to Three.js Object3D instances with distance-based scaling, rotation, auto-centering, and DOM culling.",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
     }
+  },
+  "files": [
+    "dist",
+    "magicalStyle.css"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "echo \"No tests specified\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yepistream/sorcherer.git"
+  },
+  "keywords": [
+    "threejs",
+    "overlay",
+    "html",
+    "3d",
+    "culling",
+    "sorcherer",
+    "dom"
+  ],
+  "author": "Marko Kazimirovic (yepistream/BamBam/maBBam)",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/yepistream/sorcherer/issues"
+  },
+  "homepage": "https://github.com/yepistream/sorcherer#readme",
+  "dependencies": {
+    "three": "^0.152.2"
+  }
 }
