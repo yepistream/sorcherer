@@ -30,25 +30,135 @@
 
 ## Installation
 
-Install via npm:
+Sorcherer supports three common integration tracks depending on your runtime.
+
+### 1) Bundler (ESM)
+
+Install dependencies:
 
 ```bash
-npm install sorcherer
+npm i sorcherer three
 ```
 
-Or clone the repository directly from GitHub.
+Import Sorcherer in your app:
+
+```js
+import Sorcherer from 'sorcherer';
+```
+
+Minimal end-to-end sample:
+
+```js
+import * as THREE from 'three';
+import Sorcherer from 'sorcherer';
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(0, 1.5, 4);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const cube = new THREE.Mesh(
+  new THREE.BoxGeometry(1, 1, 1),
+  new THREE.MeshNormalMaterial()
+);
+cube.name = 'cube';
+scene.add(cube);
+
+document.body.insertAdjacentHTML('beforeend', `
+  <realm>
+    <div idm="cube" autoCenter="true" simulate3D="true">
+      Cube: $label=ready$
+    </div>
+  </realm>
+`);
+
+Sorcherer.bootstrap(scene, camera, renderer);
+
+(function animate() {
+  requestAnimationFrame(animate);
+  cube.rotation.y += 0.01;
+  renderer.render(scene, camera);
+})();
+```
+
+### 2) Node / CommonJS
+
+Require Sorcherer in CommonJS:
+
+```js
+const Sorcherer = require('sorcherer');
+```
+
+Minimal end-to-end sample:
+
+```js
+const THREE = require('three');
+const Sorcherer = require('sorcherer');
+
+// In CommonJS builds, Sorcherer may be under .Sorcherer depending on your toolchain.
+const Overlay = Sorcherer.Sorcherer || Sorcherer;
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
+const renderer = { domElement: { clientWidth: 800, clientHeight: 600 } }; // minimal renderer-like stub
+
+const obj = new THREE.Object3D();
+obj.name = 'serverObject';
+scene.add(obj);
+
+Overlay.registerScene(scene);
+console.log('Registered overlays for:', [...Overlay.objectRegistry.keys()]);
+```
+
+### 3) CDN / Browser (script tags)
+
+Load `three` and Sorcherer from a CDN, then use global `Sorcherer`:
+
+```html
+<!doctype html>
+<html>
+  <body>
+    <realm>
+      <div idm="cube" autoCenter="true" simulate3D="true">Hello from CDN</div>
+    </realm>
+
+    <script src="https://unpkg.com/three@0.152.2/build/three.min.js"></script>
+    <script src="https://unpkg.com/sorcherer"></script>
+    <script>
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 100);
+      camera.position.z = 4;
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(innerWidth, innerHeight);
+      document.body.appendChild(renderer.domElement);
+
+      const cube = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshNormalMaterial());
+      cube.name = 'cube';
+      scene.add(cube);
+
+      Sorcherer.bootstrap(scene, camera, renderer);
+
+      function animate() {
+        requestAnimationFrame(animate);
+        cube.rotation.x += 0.01;
+        cube.rotation.y += 0.01;
+        renderer.render(scene, camera);
+      }
+      animate();
+    </script>
+  </body>
+</html>
+```
 
 ## Usage
 
-### Importing the Library
+### Style injection
 
-Use Sorcherer as an ES module:
-
-```js
-import { Sorcherer } from 'sorcherer';
-```
-
-Sorcherer expects `three` to be available as an ES module as well.
+Sorcherer now injects its required base styles automatically at runtime, so you no longer need to include or manage a separate external CSS file for core overlay behavior.
 
 ### Defining Overlays via the `<realm>` Tag
 
