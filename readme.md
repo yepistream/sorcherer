@@ -119,7 +119,7 @@ Example:
 
 ## Styling
 
-Sorcherer injects a minimal base style automatically at runtime. You can override `.sorcherer-container` and `.magic-MinusOne` in your app CSS.
+Sorcherer injects only minimal logic-required styles at runtime (overlay container positioning/pointer behavior). Visual styling should live in your app CSS (for example `.magic-MinusOne`).
 
 `magicalStyle.css` is still included in the package for custom/manual styling workflows, but core behavior no longer depends on loading it separately.
 

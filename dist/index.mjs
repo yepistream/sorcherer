@@ -14,16 +14,6 @@
   height: 100%;
   pointer-events: none;
 }
-
-.magic-MinusOne {
-  position: absolute;
-  color: white;
-  font-family: Arial, sans-serif;
-  background: rgba(0, 0, 0, 0.6);
-  padding: 4px 8px;
-  border-radius: 4px;
-  white-space: nowrap;
-}
 `;
     document.head.appendChild(style);
   }
