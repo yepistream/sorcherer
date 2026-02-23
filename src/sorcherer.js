@@ -2,7 +2,7 @@
 
 // Dynamically inject Sorcherer styles if not already present.
 (function injectMagicalStyle() {
-  if (typeof document !== "undefined" && !document.getElementById('magical-style')) {
+  if (typeof document !== 'undefined' && !document.getElementById('magical-style')) {
     const style = document.createElement('style');
     style.id = 'magical-style';
     style.textContent = `
@@ -38,10 +38,12 @@ class Sorcherer {
   static frustum = new Frustum();
   static matrix = new Matrix4();
   // Container element for all overlays (null in non-DOM environments).
-  static container = (typeof document !== "undefined")
+  static container = (typeof document !== 'undefined')
     ? document.createElement('div')
     : null;
   static autoUpdateRunning = false;
+  static _timeoutHandle = null;
+  static _containerAttachPending = false;
   // Registry mapping Object3D names to objects.
   static objectRegistry = new Map();
   // Global dictionary mapping idm (i.e. Object3D name) to overlay instance.
@@ -50,13 +52,62 @@ class Sorcherer {
   static get elements() { return Sorcherer.instancesById; }
   // Default scale multiplier (developers can change this via Sorcherer.defaultScaleMultiplier).
   static defaultScaleMultiplier = 1;
+  static _tempWorldPos = new Vector3();
+  static _tempProjectedPos = new Vector3();
+  static _tempFrustumPos = new Vector3();
 
-  // Static initializer: attach the overlay container.
-  static {
-    if (typeof document !== "undefined" && Sorcherer.container) {
-      Sorcherer.container.classList.add('sorcherer-container');
+  static ensureContainerAttached() {
+    if (typeof document === 'undefined' || !Sorcherer.container) return;
+    Sorcherer.container.classList.add('sorcherer-container');
+
+    if (Sorcherer.container.isConnected) return;
+
+    if (document.body) {
       document.body.appendChild(Sorcherer.container);
+      Sorcherer._containerAttachPending = false;
+      return;
     }
+
+    if (Sorcherer._containerAttachPending) return;
+    Sorcherer._containerAttachPending = true;
+
+    document.addEventListener('DOMContentLoaded', () => {
+      Sorcherer._containerAttachPending = false;
+      if (document.body && Sorcherer.container && !Sorcherer.container.isConnected) {
+        document.body.appendChild(Sorcherer.container);
+      }
+    }, { once: true });
+  }
+
+  static _hideOverlay(instance) {
+    if (instance?._parentSpan?.style) {
+      instance._parentSpan.style.display = 'none';
+    }
+  }
+
+  static _readBooleanAttribute(element, name) {
+    return (element.getAttribute(name) || '').trim().toLowerCase() === 'true';
+  }
+
+  static _parseVector3Attribute(element, name) {
+    if (!element.hasAttribute(name)) return new Vector3();
+    const raw = element.getAttribute(name);
+    if (!raw) return new Vector3();
+
+    const parts = raw.split(',').map((value) => parseFloat(value.trim()));
+    if (parts.length < 3 || parts.slice(0, 3).some((value) => Number.isNaN(value))) {
+      return new Vector3();
+    }
+
+    return new Vector3(parts[0], parts[1], parts[2]);
+  }
+
+  static _parseNumberAttribute(element, name) {
+    if (!element.hasAttribute(name)) return undefined;
+    const raw = element.getAttribute(name);
+    if (raw == null) return undefined;
+    const value = parseFloat(raw);
+    return Number.isFinite(value) ? value : undefined;
   }
 
   /**
@@ -69,40 +120,43 @@ class Sorcherer {
    */
   constructor(object, offset = new Vector3(), simulate3D = false, simulateRotation = false, autoCenter = false, scaleMultiplier) {
     this.object = object;
-    this.offset = offset;
+    this.offset = (offset && typeof offset.clone === 'function') ? offset.clone() : offset;
     this.simulate3D = simulate3D;
     this.simulateRotation = simulateRotation;
     this.autoCenter = autoCenter;
     this.scaleMultiplier = (scaleMultiplier !== undefined) ? scaleMultiplier : Sorcherer.defaultScaleMultiplier;
     this._parentSpan = this.createSpan();
-    this.innerHTML = "";
-    
-    // For dynamic variables: store the original template and dynamicVars.
-    this.template = "";
+    this.template = '';
     this.dynamicVars = {};
+    this._dynamicVarNames = new Set();
+    this._disposed = false;
+    this._removedListener = null;
 
-    if (typeof document !== "undefined" && Sorcherer.container) {
+    if (typeof document !== 'undefined' && Sorcherer.container) {
+      Sorcherer.ensureContainerAttached();
       Sorcherer.container.appendChild(this._parentSpan);
       Sorcherer.allLoadedElements.add(this);
     }
 
     // Auto-remove overlay when the Object3D is removed from its parent.
-    if (this.object) {
-      const originalOnRemoved = this.object.onRemovedFromParent;
-      this.object.onRemovedFromParent = () => {
-        if (originalOnRemoved) originalOnRemoved();
-        this.dispose();
+    if (this.object && typeof this.object.addEventListener === 'function') {
+      this._removedListener = (event) => {
+        if (event?.target === this.object) {
+          this.dispose();
+        }
       };
+      this.object.addEventListener('removed', this._removedListener);
     }
   }
 
   createSpan() {
-    if (typeof document === "undefined") {
+    if (typeof document === 'undefined') {
       // Minimal stub for non-DOM environments.
       return {
         style: {},
         classList: { add() {} },
-        innerHTML: ''
+        innerHTML: '',
+        parentElement: null
       };
     }
     const span = document.createElement('span');
@@ -111,6 +165,24 @@ class Sorcherer {
     span.style.display = 'none';
     span.style.transformOrigin = 'top left';
     return span;
+  }
+
+  _clearDynamicVarProperties() {
+    for (const varName of this._dynamicVarNames) {
+      delete this[varName];
+    }
+    this._dynamicVarNames.clear();
+  }
+
+  _defineDynamicVarAccessor(varName) {
+    if (this._dynamicVarNames.has(varName)) return;
+    this._dynamicVarNames.add(varName);
+    Object.defineProperty(this, varName, {
+      get: () => this.getDynamicVar(varName),
+      set: (value) => { this.setDynamicVar(varName, value); },
+      enumerable: true,
+      configurable: true
+    });
   }
 
   /**
@@ -122,25 +194,19 @@ class Sorcherer {
    * @param {string} innerHTML - The HTML content to display.
    */
   attach(innerHTML) {
-    // Save the template.
-    this.template = innerHTML;
+    this.template = String(innerHTML ?? '');
     this.dynamicVars = {};
-    // Regex to match $varName$ or $varName=defaultValue$.
+    this._clearDynamicVarProperties();
+
     const regex = /\$([a-zA-Z0-9_]+)(?:=([^$]+))?\$/g;
-    // First pass: extract dynamic variables and defaults.
     this.template.replace(regex, (match, varName, defaultVal) => {
       if (!(varName in this.dynamicVars)) {
         this.dynamicVars[varName] = (defaultVal !== undefined) ? defaultVal : '';
       }
-      // Define getter/setter for direct property access.
-      Object.defineProperty(this, varName, {
-        get: () => this.getDynamicVar(varName),
-        set: (value) => { this.setDynamicVar(varName, value); },
-        enumerable: true,
-        configurable: true
-      });
+      this._defineDynamicVarAccessor(varName);
       return match;
     });
+
     this.renderDynamicVars();
     this._parentSpan.style.display = 'block';
   }
@@ -175,58 +241,57 @@ class Sorcherer {
   }
 
   /**
-   * Updates the overlay’s position, scaling (based on distance), and rotation.
+   * Updates the overlay's position, scaling (based on distance), and rotation.
    * @param {THREE.Camera} camera - The active camera.
    * @param {THREE.Renderer} renderer - The active renderer.
    */
   bufferInstance(camera, renderer) {
-    if (!this.object) return;
+    if (!this.object || !camera || !renderer?.domElement) return;
     if (!this.object.visible) {
-      this._parentSpan.style.display = 'none';
+      Sorcherer._hideOverlay(this);
       return;
     }
 
-    // Get the object's world position and add the offset.
-    const objectWorldPos = new Vector3();
+    const domElement = renderer.domElement;
+    const viewportWidth = domElement.clientWidth || domElement.width || 0;
+    const viewportHeight = domElement.clientHeight || domElement.height || 0;
+    if (!viewportWidth || !viewportHeight) {
+      Sorcherer._hideOverlay(this);
+      return;
+    }
+
+    const objectWorldPos = Sorcherer._tempWorldPos;
     this.object.getWorldPosition(objectWorldPos);
-    objectWorldPos.add(this.offset);
+    if (this.offset) objectWorldPos.add(this.offset);
 
-    // Compute the Euclidean distance from the camera.
     let distance = camera.position.distanceTo(objectWorldPos);
-    // Avoid division by zero / Infinity scales.
-    if (!isFinite(distance) || distance <= 0) distance = 0.0001;
+    if (!Number.isFinite(distance) || distance <= 0) distance = 0.0001;
 
-    // Project the position to screen space.
-    const projectedPos = objectWorldPos.clone();
-    projectedPos.project(camera);
+    const projectedPos = Sorcherer._tempProjectedPos;
+    projectedPos.copy(objectWorldPos).project(camera);
 
-    const widthHalf = renderer.domElement.clientWidth / 2;
-    const heightHalf = renderer.domElement.clientHeight / 2;
+    const widthHalf = viewportWidth / 2;
+    const heightHalf = viewportHeight / 2;
     const x = widthHalf * (projectedPos.x + 1);
     const y = heightHalf * (1 - projectedPos.y);
 
-    // Build the transform string.
     let transform = `translate(${x}px, ${y}px)`;
     if (this.autoCenter) {
       transform += ' translate(-50%, -50%)';
     }
 
-    // Apply distance-based scaling if enabled.
     if (this.simulate3D) {
       const referenceDistance = 5;
       const scale = Math.max(0.1, this.scaleMultiplier * (referenceDistance / distance));
       transform += ` scale(${scale})`;
     }
 
-    // Apply rotation as part of the transform if enabled.
     if (this.simulateRotation) {
-      const angleDeg = this.object.rotation.z * (180 / Math.PI);
+      const angleDeg = (this.object.rotation?.z || 0) * (180 / Math.PI);
       transform += ` rotate(${angleDeg}deg)`;
     }
 
     this._parentSpan.style.transform = transform;
-
-    // Adjust z-index based on distance.
     this._parentSpan.style.zIndex = Math.round(1000 / distance).toString();
     this._parentSpan.style.display = 'block';
   }
@@ -239,23 +304,23 @@ class Sorcherer {
    */
   static bufferAll(camera, renderer) {
     if (!camera || !renderer) return;
+    Sorcherer.ensureContainerAttached();
 
     Sorcherer.matrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     Sorcherer.frustum.setFromProjectionMatrix(Sorcherer.matrix);
 
-    for (let element of Sorcherer.allLoadedElements) {
+    for (const element of Sorcherer.allLoadedElements) {
       if (!element.object) {
-        if (element._parentSpan && element._parentSpan.style) {
-          element._parentSpan.style.display = 'none';
-        }
+        Sorcherer._hideOverlay(element);
         continue;
       }
-      const worldPos = new Vector3();
+
+      const worldPos = Sorcherer._tempFrustumPos;
       element.object.getWorldPosition(worldPos);
       if (Sorcherer.frustum.containsPoint(worldPos)) {
         element.bufferInstance(camera, renderer);
-      } else if (element._parentSpan && element._parentSpan.style) {
-        element._parentSpan.style.display = 'none';
+      } else {
+        Sorcherer._hideOverlay(element);
       }
     }
   }
@@ -270,13 +335,14 @@ class Sorcherer {
     if (Sorcherer.autoUpdateRunning || !camera || !renderer) return;
     Sorcherer.autoUpdateRunning = true;
 
+    const tickInterval = Number.isFinite(interval) ? Math.max(0, interval) : 16;
     const useRaf = (typeof requestAnimationFrame === 'function');
 
     if (useRaf) {
       let lastTime = 0;
       const loop = (time) => {
         if (!Sorcherer.autoUpdateRunning) return;
-        if (!lastTime || time - lastTime >= interval) {
+        if (!lastTime || time - lastTime >= tickInterval) {
           lastTime = time;
           Sorcherer.bufferAll(camera, renderer);
         }
@@ -287,7 +353,7 @@ class Sorcherer {
       const loop = () => {
         if (!Sorcherer.autoUpdateRunning) return;
         Sorcherer.bufferAll(camera, renderer);
-        setTimeout(loop, interval);
+        Sorcherer._timeoutHandle = setTimeout(loop, tickInterval);
       };
       loop();
     }
@@ -295,19 +361,35 @@ class Sorcherer {
 
   static stopAutoSetup() {
     Sorcherer.autoUpdateRunning = false;
+    if (Sorcherer._timeoutHandle) {
+      clearTimeout(Sorcherer._timeoutHandle);
+      Sorcherer._timeoutHandle = null;
+    }
   }
 
   /**
    * Removes the overlay and cleans up references.
    */
   dispose() {
+    if (this._disposed) return;
+    this._disposed = true;
+
+    const object = this.object;
+    if (object && this._removedListener && typeof object.removeEventListener === 'function') {
+      object.removeEventListener('removed', this._removedListener);
+    }
+
     if (this._parentSpan.parentElement) {
       this._parentSpan.parentElement.removeChild(this._parentSpan);
     }
+
     Sorcherer.allLoadedElements.delete(this);
-    if (this.object && this.object.name && Sorcherer.instancesById[this.object.name]) {
-      delete Sorcherer.instancesById[this.object.name];
+    if (object && object.name && Sorcherer.instancesById[object.name] === this) {
+      delete Sorcherer.instancesById[object.name];
     }
+
+    this._removedListener = null;
+    this.object = null;
   }
 
   /**
@@ -326,7 +408,7 @@ class Sorcherer {
    */
   static registerScene(scene) {
     if (!scene || typeof scene.traverse !== 'function') return;
-    scene.traverse(obj => {
+    scene.traverse((obj) => {
       if (obj && obj.name) {
         Sorcherer.registerObject3D(obj);
       }
@@ -385,39 +467,32 @@ class Sorcherer {
    *
    * @param {Document|Element} [root=document] - Optional root node to search within.
    */
-  static attachFromRealm(root = document) {
-    if (typeof document === "undefined") return;
+  static attachFromRealm(root) {
+    if (typeof document === 'undefined') return;
+
     const rootNode = root || document;
+    if (!rootNode || typeof rootNode.querySelectorAll !== 'function') return;
+
     const realmElements = rootNode.querySelectorAll('realm');
     if (!realmElements.length) return;
 
     realmElements.forEach((realmElement) => {
       const elements = realmElement.querySelectorAll('[idm]');
-      elements.forEach(el => {
+      elements.forEach((el) => {
         const idm = el.getAttribute('idm');
         if (!idm) return;
+
         const object = Sorcherer.objectRegistry.get(idm);
         if (!object) return;
 
-        const simulate3D = (el.getAttribute('simulate3D') || '').toLowerCase() === 'true';
-        const simulateRotation = (el.getAttribute('simulateRotation') || '').toLowerCase() === 'true';
-        const autoCenter = (el.getAttribute('autoCenter') || '').toLowerCase() === 'true';
+        const simulate3D = Sorcherer._readBooleanAttribute(el, 'simulate3D');
+        const simulateRotation = Sorcherer._readBooleanAttribute(el, 'simulateRotation');
+        const autoCenter = Sorcherer._readBooleanAttribute(el, 'autoCenter');
+        const offset = Sorcherer._parseVector3Attribute(el, 'offset');
+        const scaleMultiplier = Sorcherer._parseNumberAttribute(el, 'scaleMultiplier');
 
-        let offset = new Vector3();
-        if (el.hasAttribute('offset')) {
-          const offsetStr = el.getAttribute('offset');
-          const parts = offsetStr.split(',').map(s => parseFloat(s.trim()));
-          if (parts.length >= 3 && parts.every(n => !isNaN(n))) {
-            offset = new Vector3(parts[0], parts[1], parts[2]);
-          }
-        }
-
-        let scaleMultiplier;
-        if (el.hasAttribute('scaleMultiplier')) {
-          const parsed = parseFloat(el.getAttribute('scaleMultiplier'));
-          if (!isNaN(parsed)) {
-            scaleMultiplier = parsed;
-          }
+        if (object.name && Sorcherer.instancesById[object.name]) {
+          Sorcherer.instancesById[object.name].dispose();
         }
 
         const instance = new Sorcherer(object, offset, simulate3D, simulateRotation, autoCenter, scaleMultiplier);
@@ -443,20 +518,23 @@ class Sorcherer {
   attachClone(targetObject, newName) {
     const clone = new Sorcherer(
       targetObject,
-      this.offset,
+      (this.offset && typeof this.offset.clone === 'function') ? this.offset.clone() : this.offset,
       this.simulate3D,
       this.simulateRotation,
       this.autoCenter,
       this.scaleMultiplier
     );
-    clone.template = this.template;
-    // Shallow-clone dynamicVars.
-    clone.dynamicVars = { ...this.dynamicVars };
-    clone.renderDynamicVars();
+
+    clone.attach(this.template);
+    for (const [key, value] of Object.entries(this.dynamicVars)) {
+      clone.setDynamicVar(key, value);
+    }
+
     if (newName) {
       targetObject.name = newName;
       Sorcherer.instancesById[newName] = clone;
     }
+
     return clone;
   }
 }
