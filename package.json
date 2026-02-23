@@ -11,16 +11,8 @@
       "require": "./dist/index.cjs"
     }
   },
-  "files": [
-    "dist",
-    "magicalStyle.css"
-  ],
   "scripts": {
-    "build": "node scripts/build.mjs",
-  "main": "index.js",
-  "module": "index.js",
-  "scripts": {
-    "build": "rollup -c",
+    "build": "node scripts/build.mjs && rollup -c",
     "test": "echo \"No tests specified\""
   },
   "repository": {
@@ -42,9 +34,6 @@
     "url": "https://github.com/yepistream/sorcherer/issues"
   },
   "homepage": "https://github.com/yepistream/sorcherer#readme",
-  "dependencies": {
-    "three": "^0.152.2"
-  },
   "files": [
     "dist",
     "src",
@@ -53,6 +42,9 @@
   ],
   "unpkg": "dist/sorcherer.umd.min.js",
   "jsdelivr": "dist/sorcherer.umd.min.js",
+  "dependencies": {
+    "three": "^0.152.2"
+  },
   "devDependencies": {
     "@rollup/plugin-terser": "^0.4.4",
     "rollup": "^4.35.0"
