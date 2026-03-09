@@ -12,7 +12,6 @@
   left: 0;
   width: 100%;
   height: 100%;
-  pointer-events: none;
 }
 `;
     document.head.appendChild(style);
@@ -243,8 +242,12 @@ class Sorcherer {
     }
 
     const domElement = renderer.domElement;
-    const viewportWidth = domElement.clientWidth || domElement.width || 0;
-    const viewportHeight = domElement.clientHeight || domElement.height || 0;
+    const viewportRect = (typeof domElement.getBoundingClientRect === 'function')
+      ? domElement.getBoundingClientRect()
+      : null;
+
+    const viewportWidth = viewportRect?.width || domElement.clientWidth || domElement.width || 0;
+    const viewportHeight = viewportRect?.height || domElement.clientHeight || domElement.height || 0;
     if (!viewportWidth || !viewportHeight) {
       Sorcherer._hideOverlay(this);
       return;
@@ -262,17 +265,42 @@ class Sorcherer {
 
     const widthHalf = viewportWidth / 2;
     const heightHalf = viewportHeight / 2;
-    const x = widthHalf * (projectedPos.x + 1);
-    const y = heightHalf * (1 - projectedPos.y);
+    const viewportLeft = viewportRect?.left || 0;
+    const viewportTop = viewportRect?.top || 0;
+    const x = viewportLeft + widthHalf * (projectedPos.x + 1);
+    const y = viewportTop + heightHalf * (1 - projectedPos.y);
 
     let transform = `translate(${x}px, ${y}px)`;
     if (this.autoCenter) {
+      //Change To Offset Instead Direct Translate.
       transform += ' translate(-50%, -50%)';
     }
 
     if (this.simulate3D) {
-      const referenceDistance = 5;
-      const scale = Math.max(0.1, this.scaleMultiplier * (referenceDistance / distance));
+      const safeScaleMultiplier = Number.isFinite(this.scaleMultiplier)
+        ? this.scaleMultiplier
+        : Sorcherer.defaultScaleMultiplier;
+      const safeDistance = (Number.isFinite(distance) && distance > 0) ? distance : 0.0001;
+
+      let projectionScale = 1;
+
+      if (camera.isPerspectiveCamera) {
+        const fovRad = (Number.isFinite(camera.fov) ? camera.fov : 50) * (Math.PI / 180);
+        const tanHalfFov = Math.tan(fovRad / 2);
+        if (Number.isFinite(tanHalfFov) && tanHalfFov > 0) {
+          const focalFactor = 1 / tanHalfFov;
+          projectionScale = focalFactor / safeDistance;
+        }
+      } else if (camera.isOrthographicCamera) {
+        const zoom = Number.isFinite(camera.zoom) && camera.zoom > 0 ? camera.zoom : 1;
+        projectionScale = zoom;
+      } else {
+        projectionScale = 1 / safeDistance;
+      }
+
+      let scale = safeScaleMultiplier * projectionScale;
+      if (!Number.isFinite(scale) || scale <= 0) scale = 1;
+
       transform += ` scale(${scale})`;
     }
 
