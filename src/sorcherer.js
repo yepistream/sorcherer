@@ -271,9 +271,41 @@ class Sorcherer {
     }
 
     if (this.simulate3D) {
-      const referenceDistance = 5;
-      const scale = Math.max(0.1, this.scaleMultiplier * (referenceDistance / distance));
-      transform += ` scale(${scale})`;
+      const safeScaleMultiplier = Number.isFinite(this.scaleMultiplier)
+        ? this.scaleMultiplier
+        : Sorcherer.defaultScaleMultiplier;
+      const safeDistance = (Number.isFinite(distance) && distance > 0) ? distance : 0.0001;
+
+      let projectionScaleX = 1;
+      let projectionScaleY = 1;
+
+      if (camera.isPerspectiveCamera) {
+        const fovRad = (Number.isFinite(camera.fov) ? camera.fov : 50) * (Math.PI / 180);
+        const tanHalfFov = Math.tan(fovRad / 2);
+        const aspect = Number.isFinite(camera.aspect) && camera.aspect > 0 ? camera.aspect : 1;
+
+        if (Number.isFinite(tanHalfFov) && tanHalfFov > 0) {
+          const focalY = 1 / tanHalfFov;
+          const focalX = focalY / aspect;
+          projectionScaleX = focalX / safeDistance;
+          projectionScaleY = focalY / safeDistance;
+        }
+      } else if (camera.isOrthographicCamera) {
+        const zoom = Number.isFinite(camera.zoom) && camera.zoom > 0 ? camera.zoom : 1;
+        projectionScaleX = zoom;
+        projectionScaleY = zoom;
+      } else {
+        projectionScaleX = 1 / safeDistance;
+        projectionScaleY = 1 / safeDistance;
+      }
+
+      let scaleX = safeScaleMultiplier * projectionScaleX;
+      let scaleY = safeScaleMultiplier * projectionScaleY;
+
+      if (!Number.isFinite(scaleX) || scaleX <= 0) scaleX = 1;
+      if (!Number.isFinite(scaleY) || scaleY <= 0) scaleY = 1;
+
+      transform += ` scale(${scaleX}, ${scaleY})`;
     }
 
     if (this.simulateRotation) {
