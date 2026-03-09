@@ -245,6 +245,13 @@
         return;
       }
 
+      if (typeof camera.updateMatrixWorld === 'function') {
+        camera.updateMatrixWorld();
+      }
+      if (this.object && typeof this.object.updateWorldMatrix === 'function') {
+        this.object.updateWorldMatrix(true, false);
+      }
+
       const domElement = renderer.domElement;
       const viewportRect = (typeof domElement.getBoundingClientRect === 'function')
         ? domElement.getBoundingClientRect()
@@ -271,8 +278,10 @@
       const heightHalf = viewportHeight / 2;
       const viewportLeft = viewportRect?.left || 0;
       const viewportTop = viewportRect?.top || 0;
-      const x = viewportLeft + widthHalf * (projectedPos.x + 1);
-      const y = viewportTop + heightHalf * (1 - projectedPos.y);
+      const pageScrollX = (typeof window !== 'undefined' && Number.isFinite(window.scrollX)) ? window.scrollX : 0;
+      const pageScrollY = (typeof window !== 'undefined' && Number.isFinite(window.scrollY)) ? window.scrollY : 0;
+      const x = pageScrollX + viewportLeft + widthHalf * (projectedPos.x + 1);
+      const y = pageScrollY + viewportTop + heightHalf * (1 - projectedPos.y);
 
       let transform = `translate(${x}px, ${y}px)`;
       if (this.autoCenter) {
